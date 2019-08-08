@@ -376,10 +376,10 @@ void Window::set_ready(long addr, int mask)
 
 Trace::Trace(const char* trace_fname) : file(trace_fname), trace_name(trace_fname)
 {
-    if (!file.good()) {
-        std::cerr << "Bad trace file: " << trace_fname << std::endl;
-        exit(1);
-    }
+//    if (!file.good()) {
+//        std::cerr << "Bad trace file: " << trace_fname << std::endl;
+//        exit(1);
+//    }
 }
 
 bool Trace::get_unfiltered_request(long& bubble_cnt, long& req_addr, Request::Type& req_type)
@@ -455,10 +455,13 @@ bool Trace::get_filtered_request(long& bubble_cnt, long& req_addr, Request::Type
 bool Trace::get_dramtrace_request(long& req_addr, Request::Type& req_type)
 {
     string line;
-    getline(file, line);
-    if (file.eof()) {
+    if (!getline(std::cin, line))
+    {
         return false;
     }
+//    if (file.eof()) {
+//        return false;
+//    }
     size_t pos;
     req_addr = std::stoul(line, &pos, 16);
 
