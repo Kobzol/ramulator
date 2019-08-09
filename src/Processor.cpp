@@ -385,12 +385,11 @@ Trace::Trace(const char* trace_fname) : file(trace_fname), trace_name(trace_fnam
 bool Trace::get_unfiltered_request(long& bubble_cnt, long& req_addr, Request::Type& req_type)
 {
     string line;
-    getline(file, line);
-    if (file.eof()) {
-      file.clear();
-      file.seekg(0, file.beg);
-      getline(file, line);
-      //return false;
+    if (!getline(std::cin, line)) {//file.eof()) {
+//      file.clear();
+//      file.seekg(0, file.beg);
+//      getline(file, line);
+      return false;
     }
     size_t pos, end;
     bubble_cnt = std::stoul(line, &pos, 10);
