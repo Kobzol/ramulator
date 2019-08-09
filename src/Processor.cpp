@@ -13,10 +13,11 @@ Processor::Processor(const Config& configs,
     no_core_caches(!configs.has_core_caches()),
     no_shared_cache(!configs.has_l3_cache()),
     cachesys(new CacheSystem(configs, send_memory)),
-    llc(l3_size, l3_assoc, l3_blocksz,
+    llc(std::stoi(getenv("RAMULATOR_L3_SIZE")), l3_assoc, l3_blocksz,
          mshr_per_bank * trace_list.size(),
          Cache::Level::L3, cachesys) {
 
+    this->l3_size = std::stoi(getenv("RAMULATOR_L3_SIZE"));
   assert(cachesys != nullptr);
   int tracenum = trace_list.size();
   assert(tracenum > 0);
@@ -146,6 +147,9 @@ Core::Core(const Config& configs, int coreid,
   // set expected limit instruction for calculating weighted speedup
   expected_limit_insts = configs.get_expected_limit_insts();
   trace.expected_limit_insts = expected_limit_insts;
+
+    this->l1_size = std::stoi(getenv("RAMULATOR_L1_SIZE"));
+    this->l2_size = std::stoi(getenv("RAMULATOR_L2_SIZE"));
 
   // Build cache hierarchy
   if (no_core_caches) {

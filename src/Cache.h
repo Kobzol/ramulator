@@ -50,6 +50,7 @@ public:
         addr(addr), tag(tag), lock(lock), dirty(dirty) {}
   };
 
+  Cache() = default;
   Cache(int size, int assoc, int block_size, int mshr_entry_num,
       Level level, std::shared_ptr<CacheSystem> cachesys);
 
