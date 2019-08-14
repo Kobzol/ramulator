@@ -28,6 +28,7 @@ set(SOURCES
         src/SALP.cpp
         src/StatType.cpp
         src/STTMRAM.cpp
+        src/TLB.cpp
         src/TLDRAM.cpp
         src/WideIO.cpp
         src/WideIO2.cpp

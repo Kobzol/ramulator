@@ -6,12 +6,15 @@
 #include "Memory.h"
 #include "Request.h"
 #include "Statistics.h"
+#include "TLB.h"
+
 #include <iostream>
 #include <vector>
 #include <fstream>
 #include <string>
 #include <ctype.h>
 #include <functional>
+#include <random>
 
 namespace ramulator 
 {
@@ -66,7 +69,8 @@ public:
     Core(const Config& configs, int coreid,
         const char* trace_fname,
         function<bool(Request)> send_next, Cache* llc,
-        std::shared_ptr<CacheSystem> cachesys, MemoryBase& memory);
+        std::shared_ptr<CacheSystem> cachesys, MemoryBase& memory,
+         TLB& l1_tlb, TLB& l2_tlb);
     void tick();
     void receive(Request& req);
     void reset_stats();
@@ -97,6 +101,9 @@ public:
     bool reached_limit = false;
 
 private:
+    long create_tlb_address(long address);
+    void handle_tlb(Request& request);
+
     Trace trace;
     Window window;
 
@@ -111,6 +118,10 @@ private:
     ScalarStat memory_access_cycles;
     ScalarStat cpu_inst;
     MemoryBase& memory;
+    TLB& l1_tlb;
+    TLB& l2_tlb;
+
+    std::default_random_engine engine;
 };
 
 class Processor {
@@ -141,6 +152,8 @@ public:
 
     std::shared_ptr<CacheSystem> cachesys;
     Cache llc;
+    TLB l1_tlb;
+    TLB l2_tlb;
 
     ScalarStat cpu_cycles;
 };

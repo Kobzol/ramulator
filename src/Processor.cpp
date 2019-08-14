@@ -15,8 +15,10 @@ Processor::Processor(const Config& configs,
     cachesys(new CacheSystem(configs, send_memory)),
     llc(std::stoi(getenv("RAMULATOR_L3_SIZE")), l3_assoc, l3_blocksz,
          mshr_per_bank * trace_list.size(),
-         Cache::Level::L3, cachesys) {
-
+         Cache::Level::L3, cachesys),
+    l1_tlb(std::stoi(getenv("RAMULATOR_L1_TLB_SIZE")), 4),
+    l2_tlb(std::stoi(getenv("RAMULATOR_L2_TLB_SIZE")), 8)
+{
     this->l3_size = std::stoi(getenv("RAMULATOR_L3_SIZE"));
   assert(cachesys != nullptr);
   int tracenum = trace_list.size();
@@ -29,13 +31,13 @@ Processor::Processor(const Config& configs,
     for (int i = 0 ; i < tracenum ; ++i) {
       cores.emplace_back(new Core(
           configs, i, trace_list[i], send_memory, nullptr,
-          cachesys, memory));
+          cachesys, memory, this->l1_tlb, this->l2_tlb));
     }
   } else {
     for (int i = 0 ; i < tracenum ; ++i) {
       cores.emplace_back(new Core(configs, i, trace_list[i],
           std::bind(&Cache::send, &llc, std::placeholders::_1),
-          &llc, cachesys, memory));
+          &llc, cachesys, memory, this->l1_tlb, this->l2_tlb));
     }
   }
   for (int i = 0 ; i < tracenum ; ++i) {
@@ -139,10 +141,12 @@ void Processor::reset_stats() {
 
 Core::Core(const Config& configs, int coreid,
     const char* trace_fname, function<bool(Request)> send_next,
-    Cache* llc, std::shared_ptr<CacheSystem> cachesys, MemoryBase& memory)
+    Cache* llc, std::shared_ptr<CacheSystem> cachesys, MemoryBase& memory,
+           TLB& l1_tlb, TLB& l2_tlb)
     : id(coreid), no_core_caches(!configs.has_core_caches()),
     no_shared_cache(!configs.has_l3_cache()),
-    llc(llc), trace(trace_fname), memory(memory)
+    llc(llc), trace(trace_fname), memory(memory), l1_tlb(l1_tlb), l2_tlb(l2_tlb),
+    engine(std::random_device()())
 {
   // set expected limit instruction for calculating weighted speedup
   expected_limit_insts = configs.get_expected_limit_insts();
@@ -212,6 +216,35 @@ double Core::calc_ipc()
     return (double) retired / clk;
 }
 
+void Core::handle_tlb(Request& request)
+{
+    request.tlb_counter++;
+    if (request.tlb_counter == 4)
+    {
+        this->l1_tlb.update((void*) request.tlb_real_addr);
+        this->l2_tlb.update((void*) request.tlb_real_addr);
+        Request newreq(request.tlb_real_addr, request.type, this->callback, id);
+        send(newreq);
+//        window.insert(false, request.tlb_real_addr);
+        std::cerr << "Page walk finished" << std::endl;
+    }
+    else
+    {
+        auto fake_address = this->create_tlb_address(request.tlb_real_addr);
+        std::cerr << "Page walk step " << request.tlb_counter << std::endl;
+        Request req(fake_address, request.type, std::bind(&Core::handle_tlb, this, std::placeholders::_1), id);
+        req.tlb_counter = request.tlb_counter;
+        send(req);
+//        window.insert(false, fake_address);
+    }
+}
+
+long Core::create_tlb_address(long address)
+{
+    std::uniform_int_distribution<> dis(0xAFFFFFFF, 0xFFFFFFFF);
+    return dis(this->engine);
+}
+
 void Core::tick()
 {
     clk++;
@@ -241,24 +274,39 @@ void Core::tick()
         }
     }
 
-    if (req_type == Request::Type::READ) {
-        // read request
-        if (inserted == window.ipc) return;
-        if (window.is_full()) return;
-
-        Request req(req_addr, req_type, callback, id);
-        if (!send(req)) return;
-
-        window.insert(false, req_addr);
-        cpu_inst++;
+    if (!this->l1_tlb.get((void*) req_addr) && !this->l2_tlb.get((void*) req_addr))
+    {
+        auto fake_address = this->create_tlb_address(req_addr);
+        Request req(fake_address, req_type, std::bind(&Core::handle_tlb, this, std::placeholders::_1), id);
+        req.tlb_real_addr = req_addr;
+        req.tlb_counter = 0;
+        if (!this->send(req)) return;
+        window.insert(false, fake_address);
     }
-    else {
-        // write request
-        assert(req_type == Request::Type::WRITE);
-        Request req(req_addr, req_type, callback, id);
-        if (!send(req)) return;
-        cpu_inst++;
+    else
+    {
+        if (req_type == Request::Type::READ)
+        {
+            // read request
+            if (inserted == window.ipc) return;
+            if (window.is_full()) return;
+
+            Request req(req_addr, req_type, callback, id);
+            if (!send(req)) return;
+
+            window.insert(false, req_addr);
+        }
+        else
+        {
+            // write request
+            assert(req_type == Request::Type::WRITE);
+            Request req(req_addr, req_type, callback, id);
+            if (!send(req)) return;
+        }
     }
+
+    cpu_inst++;
+
     if (long(cpu_inst.value()) == expected_limit_insts && !reached_limit) {
       record_cycs = clk;
       record_insts = long(cpu_inst.value());
@@ -380,20 +428,23 @@ void Window::set_ready(long addr, int mask)
 
 Trace::Trace(const char* trace_fname) : file(trace_fname), trace_name(trace_fname)
 {
-//    if (!file.good()) {
-//        std::cerr << "Bad trace file: " << trace_fname << std::endl;
-//        exit(1);
-//    }
+    if (!file.good()) {
+        std::cerr << "Bad trace file: " << trace_fname << std::endl;
+        exit(1);
+    }
 }
 
 bool Trace::get_unfiltered_request(long& bubble_cnt, long& req_addr, Request::Type& req_type)
 {
     string line;
-    if (!getline(std::cin, line)) {//file.eof()) {
+    /*if (!getline(std::cin, line)) {
+      return false;
+    }*/
+    if (!getline(file, line)) {
 //      file.clear();
 //      file.seekg(0, file.beg);
 //      getline(file, line);
-      return false;
+        return false;
     }
     size_t pos, end;
     bubble_cnt = std::stoul(line, &pos, 10);

@@ -33,6 +33,8 @@ public:
     long arrive = -1;
     long depart;
     function<void(Request&)> callback; // call back with more info
+    long tlb_real_addr;
+    size_t tlb_counter = 0;
 
     Request(long addr, Type type, int coreid = 0)
         : is_first_command(true), addr(addr), coreid(coreid), type(type),
