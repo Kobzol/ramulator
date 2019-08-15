@@ -119,6 +119,7 @@ private:
     MemoryBase& memory;
     TLB& l1_tlb;
     TLB& l2_tlb;
+    size_t page_walk_levels;
 
     std::default_random_engine engine;
 };

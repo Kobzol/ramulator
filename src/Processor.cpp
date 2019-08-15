@@ -156,6 +156,7 @@ Core::Core(const Config& configs, int coreid,
 
     this->l1_size = std::stoi(getenv("RAMULATOR_L1_SIZE"));
     this->l2_size = std::stoi(getenv("RAMULATOR_L2_SIZE"));
+    this->page_walk_levels = std::stoi(getenv("RAMULATOR_PW_LEVELS"));
 
   // Build cache hierarchy
   if (no_core_caches) {
@@ -365,7 +366,7 @@ void Core::receive(Request& req)
         auto address = req.tlb_real_addr;
         auto type = req.tlb_type;
         bool last_request = false;
-        if (req.tlb_counter == 4)
+        if (req.tlb_counter == this->page_walk_levels)
         {
 //            std::cerr << "Page walk finished" << std::endl;
             this->l1_tlb.update((void*) req.tlb_real_addr);
