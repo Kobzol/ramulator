@@ -4,6 +4,8 @@
 using namespace std;
 using namespace ramulator;
 
+#define USE_PAGE_TABLES
+
 Processor::Processor(const Config& configs,
     vector<const char*> trace_list,
     function<bool(Request)> send_memory,
@@ -218,7 +220,7 @@ double Core::calc_ipc()
 
 long Core::create_tlb_address(long address)
 {
-    std::uniform_int_distribution<> dis(0xA0000000, 0xFFFFFFFF);
+    std::uniform_int_distribution<size_t> dis(0xA0000000UL, 0xFFFFFFFFUL);
     return dis(this->engine);
 }
 
@@ -253,11 +255,14 @@ void Core::tick()
 
     auto address = req_addr;
     size_t tlb_counter = 0;
+
+#ifdef USE_PAGE_TABLES
     if (!this->l1_tlb.get((void*) req_addr) && !this->l2_tlb.get((void*) req_addr))
     {
         address = this->create_tlb_address(req_addr);
         tlb_counter = 1;
     }
+#endif
 
     if (req_type == Request::Type::READ)
     {
@@ -339,15 +344,17 @@ void Core::receive(Request& req)
         last = req.depart;
     }
 
+#ifdef USE_PAGE_TABLES
     if (req.tlb_counter > 0)
     {
-        std::cerr << "Page walk step " << req.tlb_counter << " finished" << std::endl;
+//        std::cerr << "Page walk step " << req.tlb_counter << " finished" << std::endl;
         auto address = req.tlb_real_addr;
         if (req.tlb_counter == 4)
         {
-            std::cerr << "Page walk finished" << std::endl;
+//            std::cerr << "Page walk finished" << std::endl;
             this->l1_tlb.update((void*) req.tlb_real_addr);
             this->l2_tlb.update((void*) req.tlb_real_addr);
+            req.tlb_counter = 0;
         }
         else
         {
@@ -363,6 +370,7 @@ void Core::receive(Request& req)
         if (window.is_full()) return;
         window.insert(false, address);
     }
+#endif
 }
 
 void Core::reset_stats() {
