@@ -102,7 +102,6 @@ public:
 
 private:
     long create_tlb_address(long address);
-    void handle_tlb(Request& request);
 
     Trace trace;
     Window window;

@@ -216,32 +216,9 @@ double Core::calc_ipc()
     return (double) retired / clk;
 }
 
-void Core::handle_tlb(Request& request)
-{
-    request.tlb_counter++;
-    if (request.tlb_counter == 4)
-    {
-        this->l1_tlb.update((void*) request.tlb_real_addr);
-        this->l2_tlb.update((void*) request.tlb_real_addr);
-        Request newreq(request.tlb_real_addr, request.type, this->callback, id);
-        send(newreq);
-//        window.insert(false, request.tlb_real_addr);
-        std::cerr << "Page walk finished" << std::endl;
-    }
-    else
-    {
-        auto fake_address = this->create_tlb_address(request.tlb_real_addr);
-        std::cerr << "Page walk step " << request.tlb_counter << std::endl;
-        Request req(fake_address, request.type, std::bind(&Core::handle_tlb, this, std::placeholders::_1), id);
-        req.tlb_counter = request.tlb_counter;
-        send(req);
-//        window.insert(false, fake_address);
-    }
-}
-
 long Core::create_tlb_address(long address)
 {
-    std::uniform_int_distribution<> dis(0xAFFFFFFF, 0xFFFFFFFF);
+    std::uniform_int_distribution<> dis(0xA0000000, 0xFFFFFFFF);
     return dis(this->engine);
 }
 
@@ -274,35 +251,35 @@ void Core::tick()
         }
     }
 
+    auto address = req_addr;
+    size_t tlb_counter = 0;
     if (!this->l1_tlb.get((void*) req_addr) && !this->l2_tlb.get((void*) req_addr))
     {
-        auto fake_address = this->create_tlb_address(req_addr);
-        Request req(fake_address, req_type, std::bind(&Core::handle_tlb, this, std::placeholders::_1), id);
+        address = this->create_tlb_address(req_addr);
+        tlb_counter = 1;
+    }
+
+    if (req_type == Request::Type::READ)
+    {
+        // read request
+        if (inserted == window.ipc) return;
+        if (window.is_full()) return;
+
+        Request req(address, req_type, callback, id);
         req.tlb_real_addr = req_addr;
-        req.tlb_counter = 0;
-        if (!this->send(req)) return;
-        window.insert(false, fake_address);
+        req.tlb_counter = tlb_counter;
+        if (!send(req)) return;
+
+        window.insert(false, req_addr);
     }
     else
     {
-        if (req_type == Request::Type::READ)
-        {
-            // read request
-            if (inserted == window.ipc) return;
-            if (window.is_full()) return;
-
-            Request req(req_addr, req_type, callback, id);
-            if (!send(req)) return;
-
-            window.insert(false, req_addr);
-        }
-        else
-        {
-            // write request
-            assert(req_type == Request::Type::WRITE);
-            Request req(req_addr, req_type, callback, id);
-            if (!send(req)) return;
-        }
+        // write request
+        assert(req_type == Request::Type::WRITE);
+        Request req(address, req_type, callback, id);
+        req.tlb_real_addr = req_addr;
+        req.tlb_counter = tlb_counter;
+        if (!send(req)) return;
     }
 
     cpu_inst++;
@@ -358,8 +335,33 @@ void Core::receive(Request& req)
 {
     window.set_ready(req.addr, ~(l1_blocksz - 1l));
     if (req.arrive != -1 && req.depart > last) {
-      memory_access_cycles += (req.depart - max(last, req.arrive));
-      last = req.depart;
+        memory_access_cycles += (req.depart - max(last, req.arrive));
+        last = req.depart;
+    }
+
+    if (req.tlb_counter > 0)
+    {
+        std::cerr << "Page walk step " << req.tlb_counter << " finished" << std::endl;
+        auto address = req.tlb_real_addr;
+        if (req.tlb_counter == 4)
+        {
+            std::cerr << "Page walk finished" << std::endl;
+            this->l1_tlb.update((void*) req.tlb_real_addr);
+            this->l2_tlb.update((void*) req.tlb_real_addr);
+        }
+        else
+        {
+            req.tlb_counter++;
+            address = this->create_tlb_address(req.tlb_real_addr);
+        }
+
+        Request newreq(address, req.type, callback, id);
+        newreq.tlb_counter = req.tlb_counter;
+        newreq.tlb_real_addr = req.tlb_real_addr;
+        send(newreq);
+
+        if (window.is_full()) return;
+        window.insert(false, address);
     }
 }
 
