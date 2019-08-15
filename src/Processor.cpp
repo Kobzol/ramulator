@@ -254,6 +254,7 @@ void Core::tick()
     }
 
     auto address = req_addr;
+    auto type = req_type;
     size_t tlb_counter = 0;
 
 #ifdef USE_PAGE_TABLES
@@ -261,29 +262,39 @@ void Core::tick()
     {
         address = this->create_tlb_address(req_addr);
         tlb_counter = 1;
+        type = Request::Type::READ;
+//        std::cerr << "TLB miss" << std::endl;
     }
+//    else std::cerr << "TLB hit" << std::endl;
 #endif
+
+    bool is_walk = tlb_counter != 0;
 
     if (req_type == Request::Type::READ)
     {
         // read request
-        if (inserted == window.ipc) return;
-        if (window.is_full()) return;
+        if (!is_walk && inserted == window.ipc) return;
+        if (!is_walk && window.is_full()) return;
 
-        Request req(address, req_type, callback, id);
+        Request req(address, type, callback, id);
         req.tlb_real_addr = req_addr;
         req.tlb_counter = tlb_counter;
+        req.tlb_type = req_type;
         if (!send(req)) return;
 
-        window.insert(false, req_addr);
+        if (!is_walk)
+        {
+            window.insert(false, address);
+        }
     }
     else
     {
         // write request
         assert(req_type == Request::Type::WRITE);
-        Request req(address, req_type, callback, id);
+        Request req(address, type, callback, id);
         req.tlb_real_addr = req_addr;
         req.tlb_counter = tlb_counter;
+        req.tlb_type = req_type;
         if (!send(req)) return;
     }
 
@@ -338,10 +349,13 @@ long Core::get_insts() {
 
 void Core::receive(Request& req)
 {
-    window.set_ready(req.addr, ~(l1_blocksz - 1l));
-    if (req.arrive != -1 && req.depart > last) {
-        memory_access_cycles += (req.depart - max(last, req.arrive));
-        last = req.depart;
+    if (req.tlb_counter == 0)
+    {
+        window.set_ready(req.addr, ~(l1_blocksz - 1l));
+        if (req.arrive != -1 && req.depart > last) {
+            memory_access_cycles += (req.depart - max(last, req.arrive));
+            last = req.depart;
+        }
     }
 
 #ifdef USE_PAGE_TABLES
@@ -349,26 +363,35 @@ void Core::receive(Request& req)
     {
 //        std::cerr << "Page walk step " << req.tlb_counter << " finished" << std::endl;
         auto address = req.tlb_real_addr;
+        auto type = req.tlb_type;
+        bool last_request = false;
         if (req.tlb_counter == 4)
         {
 //            std::cerr << "Page walk finished" << std::endl;
             this->l1_tlb.update((void*) req.tlb_real_addr);
             this->l2_tlb.update((void*) req.tlb_real_addr);
             req.tlb_counter = 0;
+            last_request = true;
         }
         else
         {
             req.tlb_counter++;
+            type = Request::Type::READ;
             address = this->create_tlb_address(req.tlb_real_addr);
         }
 
-        Request newreq(address, req.type, callback, id);
+        Request newreq(address, type, callback, id);
         newreq.tlb_counter = req.tlb_counter;
         newreq.tlb_real_addr = req.tlb_real_addr;
-        send(newreq);
+        newreq.tlb_type = req.tlb_type;
 
-        if (window.is_full()) return;
-        window.insert(false, address);
+        if (last_request && window.is_full()) return;
+        if (!send(newreq)) return;
+
+        if (last_request)
+        {
+            window.insert(false, address);
+        }
     }
 #endif
 }
