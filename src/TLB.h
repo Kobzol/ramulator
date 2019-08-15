@@ -29,11 +29,14 @@ class TLB
 public:
     static const size_t INDEX_BITS = 12; // 4K pages
 
-    TLB(size_t entry_count, size_t num_ways) : entry_count(entry_count), num_ways_(num_ways), counter_(0), cache_table_(entry_count)
+    TLB(size_t entry_count, size_t num_ways) : num_ways_(num_ways), counter_(0), cache_table_(std::max(entry_count, num_ways))
     {
-        num_rows_ = entry_count / num_ways;
-        assert(!(entry_count & (entry_count - 1)));
-        this->entry_bits = std::log2(entry_count);
+        size_t count = std::max(entry_count, num_ways);
+        this->entry_count = count;
+
+        num_rows_ = this->entry_count / num_ways;
+        assert(!(this->entry_count & (this->entry_count - 1)));
+        this->entry_bits = std::log2(this->entry_count);
     }
 
     size_t get_index(void* address)
